@@ -1,6 +1,7 @@
 import unittest
+from unittest.mock import patch
 
-from main import is_target_role, process_jobs
+from main import is_target_role, process_jobs, _supabase_post
 
 
 class MainTests(unittest.TestCase):
@@ -24,6 +25,23 @@ class MainTests(unittest.TestCase):
 
         self.assertEqual(len(matches), 2)
         self.assertEqual(seen, {"1", "2"})
+
+    def test_supabase_post_accepts_json_keyword(self):
+        with patch("main.httpx.post") as mock_post:
+            mock_post.return_value = type("Response", (), {"status_code": 200})()
+
+            _supabase_post(
+                url="https://example.supabase.co/rest/v1/job_seen_ids",
+                headers={"Authorization": "Bearer test"},
+                json={"id": "123"},
+            )
+
+        mock_post.assert_called_once_with(
+            "https://example.supabase.co/rest/v1/job_seen_ids",
+            headers={"Authorization": "Bearer test"},
+            json={"id": "123"},
+            timeout=10.0,
+        )
 
 
 if __name__ == "__main__":

@@ -132,8 +132,11 @@ def _supabase_get(url: str, headers: dict) -> httpx.Response:
     retry=retry_if_exception_type(httpx.HTTPError),
     reraise=True
 )
-def _supabase_post(url: str, headers: dict, json_data: dict) -> httpx.Response:
-    return httpx.post(url, headers=headers, json=json_data, timeout=10.0)
+def _supabase_post(url: str, headers: dict, **kwargs: Any) -> httpx.Response:
+    json_data = kwargs.pop("json", None)
+    if json_data is None:
+        json_data = kwargs.pop("json_data", None)
+    return httpx.post(url, headers=headers, json=json_data, timeout=10.0, **kwargs)
 
 # -----------------------------------------
 
