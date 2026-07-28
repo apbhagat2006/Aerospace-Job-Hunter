@@ -1,14 +1,17 @@
 import asyncio
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Set
-
 import httpx
 
-KEYWORDS = ["intern", "co-op", "internship", "gnc", "aerodynamics", "flight software", "propulsion", "structures", "materials", "aerospace", "space", "rocket", "guidance", "navigation", "control", "avionics", "satellite", "orbital", "launch"]
-AEROSPACE_KEYWORDS = ["aerospace", "space", "rocket", "propulsion", "structures", "materials", "gnc", "guidance", "navigation", "control", "aerodynamics", "flight software", "avionics", "satellite", "orbital", "launch"]
-INTERNSHIP_KEYWORDS = ["intern", "co-op", "internship"]
+INTERNSHIP_PATTERN = re.compile(r"\b(interns?|internship|co-?op|coop|trainee|student)\b", re.IGNORECASE)
+
+# KEYWORDS = ["intern", "co-op", "internship", "gnc", "aerodynamics", "flight software", "propulsion", "structures", "materials", "aerospace", "space", "rocket", "guidance", "navigation", "control", "avionics", "satellite", "orbital", "launch"]
+AEROSPACE_KEYWORDS = ["aerospace", "space", "rocket", "propulsion", "structures", "materials", "gnc", "guidance", "navigation", "control", "aerodynamics", "flight software", "avionics", 
+                      "satellite", "orbital", "launch", "engineering", "engineer", "software", "mechanical", "hardware", "systems", "manufacturing", "test", "payload", "flight"]
+# INTERNSHIP_KEYWORDS = ["intern", "co-op", "internship"]
 COMPANIES = [
     {"name": "SpaceX", "provider": "greenhouse", "board": "spacex"},
     {"name": "Blue Origin", "provider": "greenhouse", "board": "blue-origin"},
@@ -20,9 +23,12 @@ PERSISTENCE_FILE = Path("seen_jobs.json")
 
 def is_target_role(job_title: str) -> bool:
     title_lower = job_title.lower()
-    has_aerospace_context = any(keyword in title_lower for keyword in AEROSPACE_KEYWORDS)
-    has_internship_context = any(keyword in title_lower for keyword in INTERNSHIP_KEYWORDS)
-    return has_aerospace_context and (has_internship_context or any(keyword in title_lower for keyword in ["engineer", "software", "design", "analysis", "test", "manufacturing"]))
+    
+    is_internship = bool(INTERNSHIP_PATTERN.search(title_lower))
+    
+    is_aerospace = (any(keyword in title_lower for keyword in AEROSPACE_KEYWORDS))
+    
+    return is_internship and is_aerospace
 
 
 def process_jobs(new_jobs: List[Dict[str, Any]], seen_job_ids: Set[str]) -> List[Dict[str, Any]]:
