@@ -3,7 +3,7 @@ name: Aerospace Job Hunter
 on:
   workflow_dispatch:
   schedule:
-    - cron: '*/15 * * * *'
+    - cron: '0 */12 * * *'
 
 jobs:
   run-job-scraper:
