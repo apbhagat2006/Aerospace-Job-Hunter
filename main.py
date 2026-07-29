@@ -6,16 +6,63 @@ import httpx
 from pathlib import Path
 from typing import Any, Dict, List, Set
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from bs4 import BeautifulSoup
 
 INTERNSHIP_PATTERN = re.compile(r"\b(interns?|internship|co-?op|coop|trainee|student)\b", re.IGNORECASE)
 AEROSPACE_KEYWORDS = ["aerospace", "space", "rocket", "propulsion", "structures", "materials", "gnc", "guidance", "navigation", "control", "aerodynamics", "flight software", "avionics", 
                       "satellite", "orbital", "launch", "engineering", "engineer", "software", "mechanical", "hardware", "systems", "manufacturing", "test", "payload", "flight"]
 COMPANIES = [
+    # Original Companies
     {"name": "SpaceX", "provider": "greenhouse", "board": "spacex"},
     {"name": "Blue Origin", "provider": "greenhouse", "board": "blue-origin"},
     {"name": "Rocket Lab", "provider": "greenhouse", "board": "rocketlab"},
     {"name": "Anduril", "provider": "lever", "board": "anduril"},
-]
+    
+    # Launch Providers & Spacecraft
+    {"name": "Relativity Space", "provider": "greenhouse", "board": "relativityspace"},
+    {"name": "Firefly Aerospace", "provider": "greenhouse", "board": "fireflyaerospace"},
+    {"name": "Stoke Space", "provider": "greenhouse", "board": "stokespace"},
+    {"name": "ABL Space Systems", "provider": "greenhouse", "board": "ablspacesystems"},
+    {"name": "Impulse Space", "provider": "greenhouse", "board": "impulsespace"},
+    {"name": "Vast", "provider": "greenhouse", "board": "vast"},
+    {"name": "Axiom Space", "provider": "greenhouse", "board": "axiomspace"},
+    
+    # Satellites, Data & Comms
+    {"name": "Planet", "provider": "lever", "board": "planet"},
+    {"name": "Astranis", "provider": "greenhouse", "board": "astranis"},
+    {"name": "Capella Space", "provider": "greenhouse", "board": "capellaspace"},
+    {"name": "HawkEye 360", "provider": "greenhouse", "board": "hawkeye360"},
+    {"name": "Slingshot Aerospace", "provider": "greenhouse", "board": "slingshotaerospace"},
+    
+    # Aerospace Defense & Autonomy
+    {"name": "Shield AI", "provider": "greenhouse", "board": "shieldai"},
+    {"name": "True Anomaly", "provider": "lever", "board": "trueanomaly"},
+    {"name": "Skydio", "provider": "greenhouse", "board": "skydio"},
+    {"name": "Palantir", "provider": "lever", "board": "palantir"},
+    
+    # Hypersonics & Next-Gen Aviation
+    {"name": "Hermeus", "provider": "greenhouse", "board": "hermeus"},
+    {"name": "Joby Aviation", "provider": "greenhouse", "board": "jobyaviation"},
+    {"name": "Archer Aviation", "provider": "greenhouse", "board": "archeraviation"},
+    {"name": "Beta Technologies", "provider": "greenhouse", "board": "betatechnologies"},
+
+    # Workday Aerospace Companies
+    {"name": "Boeing", "provider": "workday", "tenant": "boeing", "site": "EXTERNAL_CAREERS"},
+    {"name": "Northrop Grumman", "provider": "workday", "tenant": "ngc", "site": "Northrop_Grumman_External_Site"},
+    {"name": "RTX (Raytheon/Collins)", "provider": "workday", "tenant": "globalhr.wd5", "site": "REC_RTX_Ext_Gateway"},
+
+    # IBM BrassRing Companies
+    {"name": "Lockheed Martin", "provider": "brassring", "partnerid": "25037", "siteid": "5010"},
+
+    # SuccessFactors Companies
+    {"name": "Gulfstream", "provider": "successfactors", "base_url": "careers.gulfstream.com"},
+    {"name": "Bombardier", "provider": "successfactors", "base_url": "jobs.bombardier.com"},
+
+    # Phenom Companies
+    {"name": "L3Harris", "provider": "phenom", "base_url": "careers.l3harris.com"},
+    {"name": "GE Aerospace", "provider": "phenom", "base_url": "jobs.gecareers.com"},
+    {"name": "BAE Systems", "provider": "phenom", "base_url": "jobs.baesystems.com"},
+    ]
 PERSISTENCE_FILE = Path("seen_jobs.json")
 
 
@@ -85,12 +132,206 @@ async def fetch_lever_jobs(company_board: str) -> List[Dict[str, Any]]:
             ]
     return []
 
+@retry(
+    stop=stop_after_attempt(3), 
+    wait=wait_exponential(multiplier=1, min=2, max=10), 
+    retry=retry_if_exception_type(httpx.TimeoutException), 
+    reraise=True
+)
+async def fetch_workday_jobs(tenant: str, site: str) -> List[Dict[str, Any]]:
+    url = f"https://{tenant}.wd1.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs"
+
+    # Will eventually need to update how this works to account for 50+ jobs and pagination
+    payload = {
+        "appliedFacets": {},
+        "limit": 50,
+        "offset": 0,
+        "searchText": ""
+    }
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(url, json=payload, headers=headers)
+        if response.status_code == 200:
+            data = response.json()
+            jobs_list = data.get("jobPostings", [])
+            
+            return [
+                {
+                    "id": job.get("bulletinTaskRqstId", job.get("externalPath", "Unknown")),
+                    "title": job.get("title", "Untitled"),
+                    "location": job.get("locationsText", "Unknown"),
+                    # Construct the absolute URL manually 
+                    "url": f"https://{tenant}.wd1.myworkdayjobs.com/en-US/{site}{job.get('externalPath', '')}"
+                }
+                for job in jobs_list
+            ]
+        return []
+
+@retry(
+    stop=stop_after_attempt(3), 
+    wait=wait_exponential(multiplier=1, min=2, max=10), 
+    retry=retry_if_exception_type(httpx.TimeoutException), 
+    reraise=True
+)
+async def fetch_brassring_jobs(partnerid: str, siteid: str) -> List[Dict[str, Any]]:
+    url = "https://sjobs.brassring.com/TgNewUI/Search/Ajax/HomeSearch"
+    
+    payload = {
+        "PageType": "JobDetails",
+        "partnerid": partnerid,
+        "siteid": siteid,
+        "Keyword": "",
+        "Longitude": 0,
+        "Latitude": 0,
+        "IsRadiusSearch": False,
+        "QuestionnaireResults": {}
+    }
+    
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(url, json=payload, headers=headers)
+        if response.status_code == 200:
+            try:
+                data = response.json()
+                # Parse through the nested BrassRing JSON structure
+                job_list = data.get("Data", {}).get("Jobs", {}).get("Job", [])
+                
+                return [
+                    {
+                        "id": job.get("JobId", "Unknown"),
+                        "title": job.get("JobTitle", "Untitled"),
+                        "location": job.get("Location", "Unknown"),
+                        "url": f"https://sjobs.brassring.com/TGnewUI/Search/home/HomeWithPreLoad?partnerid={partnerid}&siteid={siteid}&PageType=JobDetails&jobid={job.get('JobId')}"
+                    }
+                    for job in job_list
+                ]
+            except Exception:
+                return []
+        return []
+
+@retry(
+    stop=stop_after_attempt(3), 
+    wait=wait_exponential(multiplier=1, min=2, max=10), 
+    retry=retry_if_exception_type(httpx.TimeoutException), 
+    reraise=True
+)
+async def fetch_successfactors_jobs(base_url: str) -> List[Dict[str, Any]]:
+    url = f"https://{base_url}/search/?q=&sortColumn=referencedate&sortDirection=desc&startrow=0"
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+    }
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(url, headers=headers)
+        if response.status_code == 200:
+            soup = BeautifulSoup(response.text, "html.parser")
+            
+            job_rows = soup.find_all("tr", class_="data-row")
+            jobs_list = []
+            
+            for row in job_rows:
+                title_elem = row.find("a", class_="jobTitle-link")
+                location_elem = row.find("span", class_="jobLocation")
+                
+                if title_elem:
+                    title = title_elem.text.strip()
+                    job_path = title_elem.get("href", "")
+                    job_url = f"https://{base_url}{job_path}"
+                    
+                    job_id = job_path.split("/")[-2] if "/" in job_path else job_path
+                    
+                    location = location_elem.text.strip() if location_elem else "Unknown"
+                    
+                    jobs_list.append({
+                        "id": job_id,
+                        "title": title,
+                        "location": location,
+                        "url": job_url
+                    })
+                    
+            return jobs_list
+        return []
+
+@retry(
+    stop=stop_after_attempt(3), 
+    wait=wait_exponential(multiplier=1, min=2, max=10), 
+    retry=retry_if_exception_type(httpx.TimeoutException), 
+    reraise=True
+)
+async def fetch_phenom_jobs(base_url: str) -> List[Dict[str, Any]]:
+    url = f"https://{base_url}/en/search-jobs/results"
+    
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "X-Requested-With": "XMLHttpRequest",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+    }
+    
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.get(url, headers=headers, follow_redirects=True)
+        if response.status_code == 200:
+            try:
+                data = response.json()
+            
+                html_content = data.get("results", "")
+                
+                if not html_content:
+                    return []
+                
+                soup = BeautifulSoup(html_content, "html.parser")
+                job_elements = soup.find_all("li")
+                jobs_list = []
+                
+                for job in job_elements:
+                    link_elem = job.find("a")
+                    if link_elem:
+                        title = link_elem.find("h2").text.strip() if link_elem.find("h2") else "Untitled"
+                        
+                        loc_elem = link_elem.find("span", class_="job-location")
+                        location = loc_elem.text.strip() if loc_elem else "Unknown"
+                        
+                        job_path = link_elem.get("href", "")
+                        job_url = f"https://{base_url}{job_path}"
+                        
+                        job_id = job_path.split("/")[-1] if "/" in job_path else job_path
+                        
+                        jobs_list.append({
+                            "id": job_id,
+                            "title": title,
+                            "location": location,
+                            "url": job_url
+                        })
+                return jobs_list
+            except Exception as e:
+                print(f"Error parsing Phenom JSON: {e}")
+                return []
+        return []
 
 async def fetch_company_jobs(company: Dict[str, Any]) -> List[Dict[str, Any]]:
     if company["provider"] == "greenhouse":
         jobs = await fetch_greenhouse_jobs(company["board"])
-    else:
+    elif company["provider"] == "lever":
         jobs = await fetch_lever_jobs(company["board"])
+    elif company["provider"] == "workday":
+        jobs = await fetch_workday_jobs(company["tenant"], company["site"])
+    elif company["provider"] == "brassring":
+        jobs = await fetch_brassring_jobs(company["partnerid"], company["siteid"])
+    elif company["provider"] == "successfactors":
+        jobs = await fetch_successfactors_jobs(company["base_url"])
+    elif company["provider"] == "phenom":
+        jobs = await fetch_phenom_jobs(company["base_url"])
+    else:
+        jobs = []
 
     for job in jobs:
         job["company"] = company["name"]
