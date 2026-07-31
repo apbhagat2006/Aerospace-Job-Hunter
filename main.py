@@ -5,7 +5,7 @@ import re
 import httpx
 from pathlib import Path
 from typing import Any, Dict, List, Set
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, retry_if_exception
 from bs4 import BeautifulSoup
 
 INTERNSHIP_PATTERN = re.compile(r"\b(interns?|internship|co-?op|coop|trainee|student)\b", re.IGNORECASE)
@@ -150,7 +150,7 @@ async def fetch_workday_jobs(host: str, tenant: str, site: str,) -> List[Dict[st
         "Referer": f"https://{host}/en-US/{site}",
     }
 
-    page_size = 50
+    page_size = 20
     offset = 0
     all_postings: List[Dict[str, Any]] = []
 
@@ -294,48 +294,60 @@ async def fetch_successfactors_jobs(base_url: str) -> List[Dict[str, Any]]:
     reraise=True
 )
 async def fetch_phenom_jobs(base_url: str) -> List[Dict[str, Any]]:
-    url = f"https://{base_url}/en/search-jobs/results"
+    # Switch to Phenom's internal widgets API instead of the HTML endpoint
+    url = f"https://{base_url}/widgets"
     
     headers = {
-        "Accept": "application/json, text/plain, */*",
-        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
     }
     
+    # Required payload for the widgets API
+    payload = {
+        "lang": "en_us",
+        "deviceType": "desktop",
+        "country": "us",
+        "pageName": "search-results",
+        "ddoKey": "refineSearch",
+        "from": 0,
+        "size": 100, 
+        "keywords": "",
+        "global": True,
+        "selected_fields": {}
+    }
+    
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.get(url, headers=headers, follow_redirects=True)
+        response = await client.post(url, headers=headers, json=payload)
+        
         if response.status_code == 200:
             try:
                 data = response.json()
-            
-                html_content = data.get("results", "")
                 
-                if not html_content:
-                    return []
+                # Navigate the JSON structure to get the jobs array
+                jobs_data = data.get("refineSearch", {}).get("data", {}).get("jobs", [])
                 
-                soup = BeautifulSoup(html_content, "html.parser")
-                job_elements = soup.find_all("li")
                 jobs_list = []
-                
-                for job in job_elements:
-                    link_elem = job.find("a")
-                    if link_elem:
-                        title = link_elem.find("h2").text.strip() if link_elem.find("h2") else "Untitled"
-                        
-                        loc_elem = link_elem.find("span", class_="job-location")
-                        location = loc_elem.text.strip() if loc_elem else "Unknown"
-                        
-                        job_path = link_elem.get("href", "")
-                        job_url = f"https://{base_url}{job_path}"
-                        
-                        job_id = job_path.split("/")[-1] if "/" in job_path else job_path
-                        
-                        jobs_list.append({
-                            "id": job_id,
-                            "title": title,
-                            "location": location,
-                            "url": job_url
-                        })
+                for job in jobs_data:
+                    # Phenom uses jobSeqNo or jobId as unique identifiers
+                    job_id = str(job.get("jobSeqNo") or job.get("jobId", "Unknown"))
+                    title = job.get("title", "Untitled")
+                    
+                    # Safely construct the location string
+                    city = job.get("city", "")
+                    state = job.get("state", "")
+                    country = job.get("country", "")
+                    location_parts = [part for part in [city, state, country] if part]
+                    location = ", ".join(location_parts) if location_parts else "Unknown"
+                    
+                    jobs_list.append({
+                        "id": job_id,
+                        "title": title,
+                        "location": location,
+                        # Construct the job URL
+                        "url": f"https://{base_url}/en/jobs/{job_id}"
+                    })
+                    
                 return jobs_list
             except Exception as e:
                 print(f"Error parsing Phenom JSON: {e}")
@@ -384,6 +396,20 @@ async def fetch_company_jobs(company: Dict[str, Any]) -> List[Dict[str, Any]]:
         stop=stop_after_attempt(3),                                   
         wait=wait_exponential(multiplier=1, min=2, max=10),             
         retry=retry_if_exception_type(httpx.TransportError),         
+        reraise=True
+)
+def should_retry_discord_alert(exception: Exception) -> bool:
+    if isinstance(exception, httpx.TransportError):
+        return True
+    if isinstance(exception, httpx.HTTPStatusError):
+        status = exception.response.status_code
+        return status == 429 or status >= 500
+    return False
+
+@retry(
+        stop=stop_after_attempt(5),                            
+        wait=wait_exponential(multiplier=1, min=2, max=10),             
+        retry=retry_if_exception(should_retry_discord_alert),         
         reraise=True
 )
 async def send_discord_alert(webhook_url: str, job: Dict[str, Any]) -> None:
@@ -504,10 +530,10 @@ def main() -> None:
     else:
         print("No new matching roles found.")
 
-
 async def _send_all_alerts(webhook_url: str, jobs: List[Dict[str, Any]]) -> None:
     for job in jobs:
         await send_discord_alert(webhook_url, job)
+        await asyncio.sleep(0.5)
 
 
 if __name__ == "__main__":
