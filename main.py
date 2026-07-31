@@ -47,9 +47,11 @@ COMPANIES = [
     {"name": "Beta Technologies", "provider": "greenhouse", "board": "betatechnologies"},
 
     # Workday Aerospace Companies
-    {"name": "Boeing", "provider": "workday", "tenant": "boeing", "site": "EXTERNAL_CAREERS"},
-    {"name": "Northrop Grumman", "provider": "workday", "tenant": "ngc", "site": "Northrop_Grumman_External_Site"},
-    {"name": "RTX (Raytheon/Collins)", "provider": "workday", "tenant": "globalhr.wd5", "site": "REC_RTX_Ext_Gateway"},
+    {"name": "Boeing", "provider": "workday", "host": "boeing.wd1.myworkdayjobs.com", "tenant": "boeing", "site": "EXTERNAL_CAREERS"},
+    {"name": "Northrop Grumman", "provider": "workday", "host": "ngc.wd1.myworkdayjobs.com", "tenant": "ngc", "site": "Northrop_Grumman_External_Site"},
+    {"name": "RTX (Raytheon/Collins)", "provider": "workday", "host": "globalhr.wd5.myworkdayjobs.com", "tenant": "globalhr", "site": "REC_RTX_Ext_Gateway"},
+    {"name": "Airbus", "provider": "workday", "host": "ag.wd3.myworkdayjobs.com", "tenant": "ag", "site": "Airbus"},
+    {"name": "GE Aerospace", "provider": "workday", "host": "geaerospace.wd5.myworkdayjobs.com", "tenant": "geaerospace", "site": "GE_ExternalSite"},
 
     # IBM BrassRing Companies
     {"name": "Lockheed Martin", "provider": "brassring", "partnerid": "25037", "siteid": "5010"},
@@ -60,7 +62,6 @@ COMPANIES = [
 
     # Phenom Companies
     {"name": "L3Harris", "provider": "phenom", "base_url": "careers.l3harris.com"},
-    {"name": "GE Aerospace", "provider": "phenom", "base_url": "jobs.gecareers.com"},
     {"name": "BAE Systems", "provider": "phenom", "base_url": "jobs.baesystems.com"},
     ]
 PERSISTENCE_FILE = Path("seen_jobs.json")
@@ -79,7 +80,7 @@ def is_target_role(job_title: str) -> bool:
 def process_jobs(new_jobs: List[Dict[str, Any]], seen_job_ids: Set[str]) -> List[Dict[str, Any]]:
     fresh_matches: List[Dict[str, Any]] = []
     for job in new_jobs:
-        job_id = str(job["id"])
+        job_id = f"{job['company']}:{job['id']}"
         if job_id not in seen_job_ids:
             seen_job_ids.add(job_id)
             if is_target_role(job["title"]):
@@ -89,7 +90,7 @@ def process_jobs(new_jobs: List[Dict[str, Any]], seen_job_ids: Set[str]) -> List
 @retry(
         stop=stop_after_attempt(3),                                   
         wait=wait_exponential(multiplier=1, min=2, max=10),             
-        retry=retry_if_exception_type(httpx.TimeoutException),         
+        retry=retry_if_exception_type(httpx.TransportError),         
         reraise=True
 )
 async def fetch_greenhouse_jobs(company_board: str) -> List[Dict[str, Any]]:
@@ -112,7 +113,7 @@ async def fetch_greenhouse_jobs(company_board: str) -> List[Dict[str, Any]]:
 @retry(
         stop=stop_after_attempt(3),                                   
         wait=wait_exponential(multiplier=1, min=2, max=10),             
-        retry=retry_if_exception_type(httpx.TimeoutException),         
+        retry=retry_if_exception_type(httpx.TransportError),         
         reraise=True
 )
 async def fetch_lever_jobs(company_board: str) -> List[Dict[str, Any]]:
@@ -133,49 +134,73 @@ async def fetch_lever_jobs(company_board: str) -> List[Dict[str, Any]]:
     return []
 
 @retry(
-    stop=stop_after_attempt(3), 
-    wait=wait_exponential(multiplier=1, min=2, max=10), 
-    retry=retry_if_exception_type(httpx.TimeoutException), 
-    reraise=True
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=10),
+    retry=retry_if_exception_type(httpx.TransportError),
+    reraise=True,
 )
-async def fetch_workday_jobs(tenant: str, site: str) -> List[Dict[str, Any]]:
-    url = f"https://{tenant}.wd1.myworkdayjobs.com/wday/cxs/{tenant}/{site}/jobs"
+async def fetch_workday_jobs(host: str, tenant: str, site: str,) -> List[Dict[str, Any]]:
+    url = f"https://{host}/wday/cxs/{tenant}/{site}/jobs"
 
-    # Will eventually need to update how this works to account for 50+ jobs and pagination
-    payload = {
-        "appliedFacets": {},
-        "limit": 50,
-        "offset": 0,
-        "searchText": ""
-    }
-    
     headers = {
+        "Accept": "application/json",
         "Content-Type": "application/json",
-        "Accept": "application/json"
+        "Accept-Language": "en-US",
+        "User-Agent": "Mozilla/5.0",
+        "Referer": f"https://{host}/en-US/{site}",
     }
-    
+
+    page_size = 50
+    offset = 0
+    all_postings: List[Dict[str, Any]] = []
+
     async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(url, json=payload, headers=headers)
-        if response.status_code == 200:
+        while True:
+            payload = {
+                "appliedFacets": {},
+                "limit": page_size,
+                "offset": offset,
+                "searchText": "",
+            }
+
+            response = await client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+
             data = response.json()
-            jobs_list = data.get("jobPostings", [])
-            
-            return [
-                {
-                    "id": job.get("bulletinTaskRqstId", job.get("externalPath", "Unknown")),
-                    "title": job.get("title", "Untitled"),
-                    "location": job.get("locationsText", "Unknown"),
-                    # Construct the absolute URL manually 
-                    "url": f"https://{tenant}.wd1.myworkdayjobs.com/en-US/{site}{job.get('externalPath', '')}"
-                }
-                for job in jobs_list
-            ]
-        return []
+            postings = data.get("jobPostings", [])
+            total = data.get("total", 0)
+
+            if not postings:
+                break
+
+            all_postings.extend(postings)
+            offset += len(postings)
+
+            if offset >= total:
+                break
+
+    print(f"Workday {tenant}: fetched {len(all_postings)} jobs")
+    
+    return [
+        {
+            "id": job.get(
+                "bulletinTaskRqstId",
+                job.get("externalPath", "Unknown"),
+            ),
+            "title": job.get("title", "Untitled"),
+            "location": job.get("locationsText", "Unknown"),
+            "url": (
+                f"https://{host}/en-US/{site}"
+                f"{job.get('externalPath', '')}"
+            ),
+        }
+        for job in all_postings
+    ]
 
 @retry(
     stop=stop_after_attempt(3), 
     wait=wait_exponential(multiplier=1, min=2, max=10), 
-    retry=retry_if_exception_type(httpx.TimeoutException), 
+    retry=retry_if_exception_type(httpx.TransportError), 
     reraise=True
 )
 async def fetch_brassring_jobs(partnerid: str, siteid: str) -> List[Dict[str, Any]]:
@@ -221,7 +246,7 @@ async def fetch_brassring_jobs(partnerid: str, siteid: str) -> List[Dict[str, An
 @retry(
     stop=stop_after_attempt(3), 
     wait=wait_exponential(multiplier=1, min=2, max=10), 
-    retry=retry_if_exception_type(httpx.TimeoutException), 
+    retry=retry_if_exception_type(httpx.TransportError), 
     reraise=True
 )
 async def fetch_successfactors_jobs(base_url: str) -> List[Dict[str, Any]]:
@@ -265,7 +290,7 @@ async def fetch_successfactors_jobs(base_url: str) -> List[Dict[str, Any]]:
 @retry(
     stop=stop_after_attempt(3), 
     wait=wait_exponential(multiplier=1, min=2, max=10), 
-    retry=retry_if_exception_type(httpx.TimeoutException), 
+    retry=retry_if_exception_type(httpx.TransportError), 
     reraise=True
 )
 async def fetch_phenom_jobs(base_url: str) -> List[Dict[str, Any]]:
@@ -318,29 +343,47 @@ async def fetch_phenom_jobs(base_url: str) -> List[Dict[str, Any]]:
         return []
 
 async def fetch_company_jobs(company: Dict[str, Any]) -> List[Dict[str, Any]]:
-    if company["provider"] == "greenhouse":
-        jobs = await fetch_greenhouse_jobs(company["board"])
-    elif company["provider"] == "lever":
-        jobs = await fetch_lever_jobs(company["board"])
-    elif company["provider"] == "workday":
-        jobs = await fetch_workday_jobs(company["tenant"], company["site"])
-    elif company["provider"] == "brassring":
-        jobs = await fetch_brassring_jobs(company["partnerid"], company["siteid"])
-    elif company["provider"] == "successfactors":
-        jobs = await fetch_successfactors_jobs(company["base_url"])
-    elif company["provider"] == "phenom":
-        jobs = await fetch_phenom_jobs(company["base_url"])
-    else:
-        jobs = []
+    try:
+        provider = company["provider"]
+
+        if company["provider"] == "greenhouse":
+            jobs = await fetch_greenhouse_jobs(company["board"])
+        elif company["provider"] == "lever":
+            jobs = await fetch_lever_jobs(company["board"])
+        elif company["provider"] == "workday":
+            jobs = await fetch_workday_jobs(company["host"], company["tenant"], company["site"])
+        elif company["provider"] == "brassring":
+            jobs = await fetch_brassring_jobs(company["partnerid"], company["siteid"])
+        elif company["provider"] == "successfactors":
+            jobs = await fetch_successfactors_jobs(company["base_url"])
+        elif company["provider"] == "phenom":
+            jobs = await fetch_phenom_jobs(company["base_url"])
+        else:
+            print(
+                f"Skipping {company['name']}: "
+                f"unknown provider '{provider}'."
+            )
+            return []
+
+    except httpx.HTTPError as exc:
+        print(f"Skipping {company['name']}: request failed: {exc}")
+        return []
+    except (KeyError, TypeError, ValueError) as exc:
+        print(f"Skipping {company['name']}: invalid configuration: {exc}")
+        return []
+    except Exception as exc:
+        print(f"Skipping {company['name']}: unexpected error: {exc}")
+        return []
 
     for job in jobs:
         job["company"] = company["name"]
+
     return jobs
 
 @retry(
         stop=stop_after_attempt(3),                                   
         wait=wait_exponential(multiplier=1, min=2, max=10),             
-        retry=retry_if_exception_type(httpx.TimeoutException),         
+        retry=retry_if_exception_type(httpx.TransportError),         
         reraise=True
 )
 async def send_discord_alert(webhook_url: str, job: Dict[str, Any]) -> None:
@@ -353,7 +396,8 @@ async def send_discord_alert(webhook_url: str, job: Dict[str, Any]) -> None:
         )
     }
     async with httpx.AsyncClient(timeout=30.0) as client:
-        await client.post(webhook_url, json=payload)
+        response = await client.post(webhook_url, json=payload)
+        response.raise_for_status()
 
 #  --------Supabase helper functions-------
 
