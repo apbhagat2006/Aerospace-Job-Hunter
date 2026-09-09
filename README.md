@@ -156,7 +156,7 @@ Contributions welcome! To add support for new companies or job boards:
 
 ## License
 
-[Add license information here]
+This project is licensed under the MIT license.
 
 ## Notes
 
