@@ -1,169 +1,86 @@
-# Aerospace Job Hunter
+# Flightpath · Aerospace Job Hunter
 
-An automated job scraper for aerospace industry internships and co-ops. This tool searches job boards across leading aerospace companies and filters listings to find relevant opportunities in your target specializations.
+A local internship discovery dashboard and application tracker. No account, cloud database, Node installation, or Discord configuration required.
 
-## Features
+## Start here
 
-- **Multi-Platform Support**: Scrapes job listings from multiple job board providers:
-  - Greenhouse
-  - Lever
-  - Workday
-  - IBM BrassRing
-  - SuccessFactors
-  - Phenom
+Install **Python 3.11 or newer**, open a terminal in this folder, and run:
 
-- **Smart Filtering**: Automatically identifies internships and co-ops in aerospace roles by:
-  - Detecting internship-related keywords (internship, co-op, trainee, etc.)
-  - Matching aerospace-specific technical keywords (propulsion, guidance, navigation, avionics, etc.)
-
-- **Duplicate Prevention**: Tracks seen jobs locally to avoid redundant notifications
-
-- **Robust Retries**: Uses exponential backoff to handle network failures gracefully
-
-## Supported Companies
-
-### Launch Providers & Spacecraft
-- SpaceX
-- Blue Origin
-- Rocket Lab
-- Relativity Space
-- Firefly Aerospace
-- Stoke Space
-- ABL Space Systems
-- Impulse Space
-- Vast
-- Axiom Space
-
-### Satellites, Data & Communications
-- Planet
-- Astranis
-- Capella Space
-- HawkEye 360
-- Slingshot Aerospace
-
-### Aerospace Defense & Autonomy
-- Anduril
-- Shield AI
-- True Anomaly
-- Skydio
-- Palantir
-
-### Hypersonics & Next-Gen Aviation
-- Hermeus
-- Joby Aviation
-- Archer Aviation
-- Beta Technologies
-
-### Defense & Aerospace Contractors
-- Boeing
-- Northrop Grumman
-- RTX (Raytheon/Collins)
-- Airbus
-- GE Aerospace
-- Lockheed Martin
-- Gulfstream
-- Bombardier
-- L3Harris
-- BAE Systems
-
-## Installation
-
-### Prerequisites
-- Python 3.8 or higher
-- pip (Python package installer)
-
-### Setup
-
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd "Aerospace Job Hunter"
+```sh
+python -m venv .venv
 ```
 
-2. Install dependencies:
-```bash
-pip install -r requirements.txt
+Windows:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe app.py
 ```
 
-## Usage
+macOS / Linux:
 
-### Running the Scraper
+```sh
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python app.py
+```
 
-```bash
+On Windows, `start.ps1` also creates the environment, installs requirements, and starts the app. Run it from PowerShell if your local script policy allows it.
+
+The app opens **http://127.0.0.1:8765**. Keep the terminal open: it checks jobs on startup and every six hours while running. Closing the browser does not stop it; Ctrl+C in the terminal does. Your computer must be awake and online to collect new jobs. Saved listings remain available offline.
+
+## What you can do
+
+- Search titles, companies, and locations, and filter by company or application stage.
+- Save jobs and track **saved → applied → interviewing → offer**, plus rejected and withdrawn.
+- Keep private notes for deadlines, contacts, and next steps.
+- Open original postings to apply; changing a stage does not submit an application.
+- Keep tracked jobs even after they disappear from the source board.
+- Inspect source health: failures never masquerade as successful empty results or close existing listings.
+- Search a directory of 300+ aerospace employers across 17 sectors, including startups, suppliers, NASA contractors, MRO firms, and international companies.
+- Export tracked applications to CSV from the sidebar.
+- Open a company people search on LinkedIn from each job detail panel.
+
+“First found” is when this installation discovered a job, **not its publication date**. Results include worldwide technical internships and co-ops; matching uses title keywords, not degree, citizenship, location, or eligibility checks. Review the actual posting. The tracker always retains closed jobs; Discover hides them unless Include closed is checked.
+
+## Data and settings
+
+Your data lives in `data/jobs.sqlite3`, excluded from Git. To back up or transfer everything, stop the app and copy this file. CSV is an export for external use, not a full database backup or an import format. No Supabase account is needed.
+
+```sh
+python app.py --port 8766 --interval 120
+python app.py --no-refresh
+python app.py --data-dir /path/to/private/folder
 python main.py
 ```
 
-This will:
-1. Query all supported aerospace company job boards
-2. Filter for internships/co-ops matching aerospace keywords
-3. Track new and previously seen jobs
-4. Store persistent job data for future runs
+`--interval` is in minutes (minimum 5). `--no-refresh` disables startup/scheduled checks but keeps manual refresh. `--no-browser` prevents opening a browser. `python main.py` runs one collection using the same database as the dashboard. Run one collector at a time; do not run the CLI alongside dashboard refreshes. `AEROSPACE_DATA_DIR` also overrides the storage folder. The server binds only to this computer; it is not a public web server.
 
-### Configuration
+Edit `companies.json` to maintain sources; changes are loaded each refresh. Use `"enabled": false` to skip a company. Every entry needs a unique `name`, a `category`, an HTTPS `careers_url`, and a `provider`. Greenhouse, Lever, Ashby, and SmartRecruiters need a `board`; Workday needs `host`, `tenant`, and `site`. Use `"provider": "manual"` when no stable public feed is available. Keep company names stable because they form part of job identity. Changing a name creates separate history.
 
-Edit the `AEROSPACE_KEYWORDS` and `COMPANIES` lists in `main.py` to:
-- Add or remove aerospace specializations you're interested in
-- Include or exclude specific companies
+## Source coverage and limitations
 
-## Testing
+The active collector supports **Greenhouse, Lever, Workday, Ashby, and SmartRecruiters**, with bounded concurrency, transient-error retries, response validation, and pagination. The Company directory includes 300+ employers even when their hiring platforms do not expose a stable public feed. Those entries open the official careers page and are labeled manual; they do not produce automatic listings until a reliable adapter is added. The catalog is intentionally broad, but companies, career pages, and internship programs change continuously, so it cannot be a permanent claim of literal completeness.
 
-Run the test suite to verify functionality:
+Failed automatic sources preserve their previous listings. A successful source can legitimately have no matching internships. Workday collection has a 150-second per-company deadline; if it cannot finish, prior data is preserved. The directory covers US and international employers, but the automatic title filter does not determine citizenship, work authorization, degree year, security-clearance eligibility, or whether a company currently has an internship open.
 
-```bash
-python -m pytest tests/test_main.py
+The original `main.py` provider helpers remain for compatibility, but both entry points use the new collector in `hunter.py`. Its contracts follow [Greenhouse's Job Board API](https://docs.greenhouse.io/job-board.html), [Lever's Postings API](https://github.com/lever/postings-api), and the public Ashby and SmartRecruiters job-board responses. Workday and some other career-site endpoints can change without notice.
+
+The LinkedIn shortcut is **not an automatic connection integration**. It opens people search and does not read your account or identify connections inside this app. LinkedIn API access is restricted; see [LinkedIn API access](https://learn.microsoft.com/en-us/linkedin/shared/authentication/getting-access). A future connection feature would need approved access or an explicit user-provided contacts import.
+
+## Optional Discord alerts
+
+Set `DISCORD_WEBHOOK_URL` in the environment before starting the app or CLI. Treat it like a password; do not commit it. No alerts are sent without it. On the first enabled run, all currently open, previously unnotified matches are eligible for alerts, including jobs collected before Discord was configured.
+
+Alerts are marked delivered **only after a successful response**. Failed deliveries remain pending and retry at the next refresh. Delivery is at least once: an ambiguous network failure or a crash after Discord accepts a message can cause a duplicate. Allowed mentions are disabled.
+
+The GitHub Actions scraper keeps separate history through Actions cache and runs every 12 hours. Cache eviction can reset that history and cause repeat alerts. The cloud run does not synchronize with your local dashboard. Existing `seen_jobs.json` and Supabase IDs are not migrated: the new database needs complete listings, so its first collection treats matches as newly discovered. Keep old files for reference.
+
+## Development and checks
+
+```sh
+python -m unittest discover -s tests -v
 ```
 
-Or using unittest:
+Tests use temporary databases, mocked job boards and Discord, and a local HTTP server. They cover persistence, deduplication, status validation, source failures, pagination, notification retries, exports, and local request protections. CI runs on Windows and Linux with Python 3.11 and 3.14.
 
-```bash
-python -m unittest tests.test_main
-```
-
-### Test Coverage
-
-- Role matching logic (aerospace keyword detection)
-- Internship pattern recognition
-- Duplicate job handling
-- API integration
-
-## Dependencies
-
-- **httpx** (>=0.27.0): Async HTTP client for efficient job board queries
-- **tenacity** (>=8.2.0): Retry logic with exponential backoff for resilient API calls
-- **beautifulsoup4** (>=4.15.0): HTML parsing for job board content extraction
-
-## Architecture
-
-### Key Components
-
-- `is_target_role()`: Filters jobs based on title keywords
-- `process_jobs()`: Deduplicates and validates new job listings
-- `fetch_*_jobs()`: Provider-specific scrapers (Greenhouse, Lever, Workday, etc.)
-- Persistence layer: Local JSON tracking of seen jobs
-
-### Keyword Categories
-
-- **Internship Terms**: internship, co-op, trainee, student
-- **Aerospace Specializations**: aerospace, space, rocket, propulsion, structures, guidance/navigation/control (GNC), avionics, satellite, flight software, and more
-
-## Contributing
-
-Contributions welcome! To add support for new companies or job boards:
-
-1. Add company configuration to the `COMPANIES` list
-2. Implement a provider-specific scraper function
-3. Add corresponding tests to `tests/test_main.py`
-
-## License
-
-This project is licensed under the MIT license.
-
-## Notes
-
-- Job boards may have rate limits; the retry logic includes exponential backoff
-- Run periodically (e.g., daily) via cron or task scheduler to catch new listings
-- Update the `AEROSPACE_KEYWORDS` list as new specializations emerge
-
-## Support
-
-For issues or suggestions, please open an issue in the repository.
+Files: `app.py` serves the local UI and schedules checks; `hunter.py` owns collection and SQLite storage; `companies.json` defines sources; `static/` contains the browser interface. There is no build step.
