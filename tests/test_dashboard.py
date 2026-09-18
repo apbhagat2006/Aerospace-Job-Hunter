@@ -9,6 +9,7 @@ from http.server import ThreadingHTTPServer
 
 import httpx
 from app import Application, handler_for
+from desktop import LocalDashboard, user_data_dir
 from hunter import Store, collect, load_companies, refresh
 from main import is_target_role
 
@@ -179,6 +180,23 @@ class ServerTests(unittest.TestCase):
     def test_double_refresh_is_rejected(self):
         self.app.state['running'] = True
         self.assertFalse(self.app.start_refresh())
+
+
+class DesktopLauncherTests(unittest.TestCase):
+    def test_close_stops_local_server(self):
+        with tempfile.TemporaryDirectory() as directory:
+            dashboard = LocalDashboard(directory, auto_refresh=False)
+            dashboard.start()
+            client = httpx.Client(base_url=dashboard.url)
+            self.assertEqual(client.get('/').status_code, 200)
+            client.close()
+            dashboard.close()
+            self.assertFalse(dashboard.server_thread.is_alive())
+            dashboard.close()  # Closing events and final cleanup may both call this.
+
+    def test_data_directory_is_stable_and_overridable(self):
+        with patch.dict('os.environ', {'FLIGHTPATH_DATA_DIR': 'C:/Flightpath-Test'}, clear=True):
+            self.assertEqual(user_data_dir(), Path('C:/Flightpath-Test'))
 
 
 class MatchingTests(unittest.TestCase):

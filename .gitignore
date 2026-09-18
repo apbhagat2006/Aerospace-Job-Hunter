@@ -5,3 +5,5 @@ data/
 .env
 seen_jobs.json
 *.sqlite3*
+build/
+dist/
