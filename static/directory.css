@@ -1,0 +1,15 @@
+.source {
+  grid-template-columns: minmax(150px, 1.1fr) minmax(150px, 1.5fr) minmax(180px, 2fr) auto;
+}
+.source:last-child { border-radius: 0 0 9px 9px; }
+.source-manual { color: #66766d; }
+.source a { color: #315f4c; font-weight: 650; white-space: nowrap; }
+.source a:hover { text-decoration: underline; }
+@media (max-width: 900px) {
+  .source { grid-template-columns: minmax(130px, 1fr) 1.5fr auto; }
+  .source-location { display: none; }
+}
+@media (max-width: 720px) {
+  .source { grid-template-columns: 1fr; gap: 7px; }
+  .source-location { display: block; }
+}

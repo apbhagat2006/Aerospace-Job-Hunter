@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Set
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, retry_if_exception
 from bs4 import BeautifulSoup
 
-INTERNSHIP_PATTERN = re.compile(r"\b(interns?|internship|co-?op|coop|trainee|student)\b", re.IGNORECASE)
+INTERNSHIP_PATTERN = re.compile(r"\b(interns?|internship|co[ -]?op|trainee|student)\b", re.IGNORECASE)
 AEROSPACE_KEYWORDS = ["aerospace", "space", "rocket", "propulsion", "structures", "materials", "gnc", "guidance", "navigation", "control", "aerodynamics", "flight software", "avionics", 
                       "satellite", "orbital", "launch", "engineering", "engineer", "software", "mechanical", "hardware", "systems", "manufacturing", "test", "payload", "flight"]
 COMPANIES = [
@@ -72,7 +72,7 @@ def is_target_role(job_title: str) -> bool:
     
     is_internship = bool(INTERNSHIP_PATTERN.search(title_lower))
     
-    is_aerospace = (any(keyword in title_lower for keyword in AEROSPACE_KEYWORDS))
+    is_aerospace = (any(re.search(r"\b" + re.escape(keyword) + r"\b", title_lower) for keyword in AEROSPACE_KEYWORDS))
     
     return is_internship and is_aerospace
 
@@ -80,7 +80,7 @@ def is_target_role(job_title: str) -> bool:
 def process_jobs(new_jobs: List[Dict[str, Any]], seen_job_ids: Set[str]) -> List[Dict[str, Any]]:
     fresh_matches: List[Dict[str, Any]] = []
     for job in new_jobs:
-        job_id = f"{job['company']}:{job['id']}"
+        job_id = f"{job['company']}:{job['id']}" if job.get('company') else str(job['id'])
         if job_id not in seen_job_ids:
             seen_job_ids.add(job_id)
             if is_target_role(job["title"]):
@@ -520,15 +520,17 @@ async def run_scraper() -> List[Dict[str, Any]]:
 
 
 def main() -> None:
-    fresh_matches = asyncio.run(run_scraper())
-    if fresh_matches:
-        webhook_url = os.getenv("DISCORD_WEBHOOK_URL")
-        if webhook_url:
-            asyncio.run(_send_all_alerts(webhook_url, fresh_matches))
-        else:
-            print(f"Found {len(fresh_matches)} new matches but no Discord webhook was configured.")
-    else:
-        print("No new matching roles found.")
+    # CLI and dashboard share persistence and retryable notification state.
+    from hunter import ROOT, Store, refresh
+    store = Store(Path(os.getenv("AEROSPACE_DATA_DIR", str(ROOT / "data"))) / "jobs.sqlite3")
+    result = asyncio.run(refresh(store))
+    print(f"Found {result['added']} new matching roles.")
+    if result['notification_error']:
+        print(result['notification_error'])
+    for source in store.snapshot()['sources']:
+        if source['state'] == 'error':
+            print(f"{source['company']}: {source['detail']}")
+
 
 async def _send_all_alerts(webhook_url: str, jobs: List[Dict[str, Any]]) -> None:
     for job in jobs:

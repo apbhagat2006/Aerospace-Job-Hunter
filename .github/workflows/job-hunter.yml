@@ -1,5 +1,9 @@
 name: Aerospace Job Hunter
 
+concurrency:
+  group: job-hunter
+  cancel-in-progress: false
+
 on:
   workflow_dispatch:
   schedule:
@@ -9,8 +13,6 @@ jobs:
   run-job-scraper:
     runs-on: ubuntu-latest
     env:
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
       DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
     steps:
       - name: Checkout repository
@@ -26,5 +28,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Restore job and notification history
+        uses: actions/cache/restore@v4
+        with:
+          path: data/jobs.sqlite3
+          key: job-history-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            job-history-${{ github.ref_name }}-
+
       - name: Run scraper
         run: python main.py
+
+      - name: Preserve job and notification history
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data/jobs.sqlite3
+          key: job-history-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
